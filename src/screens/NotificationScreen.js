@@ -101,7 +101,7 @@ export default function NotificationScreen({ route, navigation }) {
         <View style={{flexDirection: 'row'}}>
             <TouchableOpacity 
             style={{marginTop: 77, marginLeft: 25}} 
-            onPress={() => navigation.goBack()}>
+            onPress={() => navigation.navigate('BookDetailScreen', { book })}>
             <Image source={require('../../assets/Vector.png')} />
             </TouchableOpacity>
             <Text style={[styles.mainTitle, {marginLeft: 90, marginTop: 70, marginBottom: 30}]}>Напоминание</Text>

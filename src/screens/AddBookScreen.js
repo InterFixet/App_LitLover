@@ -35,8 +35,6 @@ export default function AddBookScreen({ route, navigation }) {
       Alert.alert('Успешно', `Книга добавлена в "${status}"`, [
         { text: "OK", onPress: () => navigation.goBack() }
       ]);
-      // Обновляем параметр для триггера обновления
-      navigation.navigate('HomeScreen', { refresh: true });
     } catch (error) {
       Alert.alert('Ошибка', 'Не удалось добавить книгу');
       console.error(error);

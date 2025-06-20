@@ -1,7 +1,7 @@
 import React from 'react';
-import { Image } from 'react-native';
-import { useState, useEffect } from 'react';
-import { ScrollView, View,  ActivityIndicator, Text, StatusBar,TextInput, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { Image, Dimensions } from 'react-native';
+import { useState, useEffect, useRef } from 'react';
+import { ScrollView, View, Animated, ActivityIndicator, Text, StatusBar,TextInput, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { signOut } from 'firebase/auth';
 import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
@@ -12,8 +12,11 @@ import { Picker } from '@react-native-picker/picker'
 import { doc, getDoc } from 'firebase/firestore';
 import { useNavigation } from '@react-navigation/native';
 import { AnimatedCircularProgress } from 'react-native-circular-progress';
+import { LineChart } from 'react-native-chart-kit'
 
 const BACKEND_URL = 'http://10.0.2.2:3000';
+
+const screenWidth = Dimensions.get('window').width;
 
 // Экран Мои книги
 function FeedScreen() {
@@ -256,8 +259,79 @@ function FeedScreen() {
 // Экран Статистика
 function MessagesScreen({ navigation }) {
   const rows = 6, columns = 7, totalCells = rows * columns;
+  const [books, setBooks] = useState([]);
   const [readDates, setReadDates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pagesData, setPagesData] = useState({
+    labels: [],
+    datasets: [{ data: [] }]
+  });
+
+  // Функция для загрузки данных
+const fetchPagesData = async () => {
+  try {
+    const user = auth.currentUser;
+    const userRef = doc(db, 'users', user.uid);
+    const snap = await getDoc(userRef);
+    const books = snap.data()?.books || [];
+
+    const allReadPages = books.flatMap(book => 
+      (book.readPages || []).map(pageRecord => ({
+        date: pageRecord.date,
+        pages: pageRecord.pages
+      }))
+    );
+
+    const today = new Date();
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setDate(today.getDate() - 14);
+
+    const recentData = allReadPages.filter(item => {
+      const itemDate = new Date(item.date);
+      return itemDate >= twoWeeksAgo && itemDate <= today;
+    });
+
+    const groupedByDay = recentData.reduce((acc, item) => {
+      const date = item.date.split('T')[0];
+      acc[date] = (acc[date] || 0) + item.pages;
+      return acc;
+    }, {});
+
+    const sortedDates = Object.keys(groupedByDay).sort();
+    
+    const labels = sortedDates.map(date => {
+      const day = new Date(date).getDay();
+      return ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][day];
+    });
+    
+    const data = sortedDates.map(date => groupedByDay[date]);
+
+    setPagesData({
+      labels,
+      datasets: [{
+        data,
+        color: (opacity = 1) => `rgba(255, 133, 162, ${opacity})`,
+        strokeWidth: 2
+      }]
+    });
+
+  } catch (e) {
+    console.error('Ошибка загрузки данных о страницах:', e);
+  }
+};
+
+// В useEffect
+useEffect(() => {
+  const fetchData = async () => {
+    await fetchReadDates();
+    await fetchPagesData();
+  };
+  
+  fetchData();
+  
+  const interval = setInterval(fetchPagesData, 86400000);
+  return () => clearInterval(interval);
+}, []);
 
   const today = new Date();
   const currentMonth = today.getMonth(); // 0 - Jan
@@ -265,16 +339,53 @@ function MessagesScreen({ navigation }) {
   const monthName = today.toLocaleString('ru-RU', { month: 'long' });
   const capitalizedMonthName = monthName.charAt(0).toUpperCase() + monthName.slice(1);
 
+  const pageData = {
+    labels: ["Пт", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс", "Пт", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
+    datasets: [
+      {
+        data: [0, 50, 100, 150, 200, 250, 300], // Здесь должны быть ваши реальные данные о страницах
+        color: (opacity = 1) => `rgba(255, 133, 162, ${opacity})`,
+        strokeWidth: 2
+      }
+    ]
+  };
+
+  const chartConfig = {
+    backgroundColor: "#F8EDEB",
+    backgroundGradientFrom: "#F8EDEB",
+    backgroundGradientTo: "#F8EDEB",
+    decimalPlaces: 0,
+    color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+    labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+    style: {
+      borderRadius: 16
+    },
+    propsForDots: {
+      r: "4",
+      strokeWidth: "2",
+      stroke: "#FF85A2"
+    }
+  };
+  // Прошлый месяц и год
+  const prevMonthDate = new Date(currentYear, currentMonth - 1, 1);
+  const prevMonth = prevMonthDate.getMonth();
+  const prevYear = prevMonthDate.getFullYear();
+  const daysInPrevMonth = new Date(prevYear, prevMonth + 1, 0).getDate();
+  const prevMonthPrefix = `${prevYear}-${String(prevMonth + 1).padStart(2, '0')}`;
+  const daysReadPrevMonth = readDates.filter(date => date.startsWith(prevMonthPrefix)).length;
+
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
   const startDayIndex = firstDayOfMonth.getDay(); // 0 (Sun) — 6 (Sat)
   const shift = startDayIndex === 0 ? 6 : startDayIndex - 1;
   const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
   const daysInPreviousMonth = new Date(currentYear, currentMonth, 0).getDate();
 
-  const formatDateToISO = (year, month, day) => {
-    const mm = String(month + 1).padStart(2, '0');
-    const dd = String(day).padStart(2, '0');
-    return `${year}-${mm}-${dd}`;
+  // Функция форматирования даты в ISO (YYYY-MM-DD)
+  const formatDateToISO = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
   const readDateSet = new Set(readDates);
@@ -284,7 +395,7 @@ function MessagesScreen({ navigation }) {
   // Добавляем дни предыдущего месяца
   for (let i = shift - 1; i >= 0; i--) {
     const day = daysInPreviousMonth - i;
-    const dateStr = formatDateToISO(currentYear, currentMonth - 1, day);
+    const dateStr = formatDateToISO(new Date(currentYear, currentMonth - 1, day));
     daysArray.push({
       day,
       current: false,
@@ -294,7 +405,7 @@ function MessagesScreen({ navigation }) {
 
   // Добавляем дни текущего месяца
   for (let i = 1; i <= daysInCurrentMonth; i++) {
-    const dateStr = formatDateToISO(currentYear, currentMonth, i);
+    const dateStr = formatDateToISO(new Date(currentYear, currentMonth, i));
     daysArray.push({
       day: i,
       current: true,
@@ -305,7 +416,7 @@ function MessagesScreen({ navigation }) {
   // Добавляем дни следующего месяца
   const nextDaysCount = totalCells - daysArray.length;
   for (let i = 1; i <= nextDaysCount; i++) {
-    const dateStr = formatDateToISO(currentYear, currentMonth + 1, i);
+    const dateStr = formatDateToISO(new Date(currentYear, currentMonth + 1, i));
     daysArray.push({
       day: i,
       current: false,
@@ -362,6 +473,45 @@ const daysReadThisMonth = readDates.filter(date => date.startsWith(currentMonthP
     return grid;
   };
 
+const LinearProgressBar = ({ progress }) => {
+  const animation = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(animation, {
+      toValue: progress,
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+  }, [progress]);
+
+  const widthInterpolated = animation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%']
+  });
+
+  return (
+    <View style={{ 
+  height: 20, 
+  width: 350,           // поправил ширину, 5000 слишком много :)
+  backgroundColor: '#ccc', // например, серый для пустой части
+  borderRadius: 10, 
+  overflow: 'hidden', 
+  marginTop: 5,
+  marginLeft: 10,
+  marginBottom: 20,
+}}>
+  <View style={{ 
+    height: '100%', 
+    width: `${progress * 100}%`, 
+    backgroundColor: '#FF85A2', // цвет заполненной части
+    borderRadius: 10 
+  }} />
+</View>
+  );
+};
+
+
+
   useEffect(() => {
     const fetchReadDates = async () => {
       try {
@@ -388,12 +538,12 @@ const daysReadThisMonth = readDates.filter(date => date.startsWith(currentMonthP
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.mainTitle, { marginLeft: 135 }]}>Статистика</Text>
-      <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: 10 }]}>Календарь</Text>
+      <Text style={[styles.mainTitle, { marginLeft: 135, bottom: 10 }]}>Статистика</Text>
+      <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: -30 }]}>Календарь</Text>
       <View style={{ flexDirection: 'row' }}>
-        <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: 0, fontWeight: '400' }]}>{capitalizedMonthName}</Text>
+        <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: -20, marginBottom: 10, fontWeight: '400' }]}>{capitalizedMonthName}</Text>
         <TouchableOpacity
-          style={{ marginTop: 8, marginLeft: 15 }}
+          style={{ marginTop: -13, marginLeft: 15 }}
           onPress={() => navigation.goBack()}
         >
           <Image
@@ -401,6 +551,15 @@ const daysReadThisMonth = readDates.filter(date => date.startsWith(currentMonthP
             style={{ transform: [{ scaleX: -1 }] }}
           />
         </TouchableOpacity>
+      </View>
+      <View style={{flexDirection: 'row', marginBottom: 10}}>
+        <Text> Пн       </Text>
+        <Text>Вт      </Text>
+        <Text>Ср       </Text>
+        <Text>Чт       </Text>
+        <Text>Пт      </Text>
+        <Text>Сб      </Text>
+        <Text>Вс  </Text>
       </View>
 
       {renderGrid()}
@@ -424,6 +583,26 @@ const daysReadThisMonth = readDates.filter(date => date.startsWith(currentMonthP
           )}
         </AnimatedCircularProgress>
       </View>
+      <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: -140, fontWeight: '400', fontSize: 22, marginBottom: 8}]}>Ваша активность в этом месяце:</Text>
+      <LinearProgressBar progress={daysReadThisMonth / daysInCurrentMonth} />
+      <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: 0, fontWeight: '400', fontSize: 22, marginBottom: 8}]}>Ваш прогресс в прошлом месяце:</Text>
+      <LinearProgressBar progress={daysReadPrevMonth / daysInPrevMonth} />
+      <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: 0, fontWeight: '800', fontSize: 22, marginBottom: 4}]}>Страницы</Text>
+      <Text style={[styles.mainTitle, { marginLeft: 10, marginTop: 0, fontWeight: '400', fontSize: 18, marginBottom: 8}]}>{capitalizedMonthName}</Text>
+      <LineChart
+        data={pageData}
+        width={450}
+        height={220}
+        chartConfig={chartConfig}
+        bezier
+        style={{
+          marginVertical: 8,
+          borderRadius: 16,
+          marginLeft: -30,
+          marginRight: 10
+        }}
+        fromZero // Начинать ось Y с 0
+      />
     </View>
   );
 }

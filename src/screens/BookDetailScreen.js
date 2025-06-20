@@ -16,7 +16,63 @@ export default function BookDetailScreen({ route, navigation }) {
 
   const thumbnail = book.thumbnail;
 
-  const { title, authors, totalPages = 0, pagesRead = 0, lastNote = null } = currentBook;
+  const { title, authors, totalPages = 0, pagesRead = 0, lastNote = null, status } = currentBook;
+
+  // Определяем текущий статус для стилизации кнопки
+  const getButtonStyle = (status) => {
+    const isActive = currentBook.status === status;
+    return {
+      backgroundColor: isActive ? 
+        (status === 'Прочитано' ? '#B5EAD7' : 
+         status === 'Читаю сейчас' ? '#FFD166' : '#A5D8FF') : '#F0F0F0',
+      opacity: isActive ? 1 : 0.7,
+      paddingVertical: 10,
+      paddingHorizontal: 15,
+      borderRadius: 8,
+      marginHorizontal: 5,
+      minWidth: 120,
+      alignItems: 'center'
+    };
+  };
+
+  // Функция для изменения статуса книги
+  const handleChangeStatus = async (newStatus) => {
+    if (currentBook.status === newStatus) return;
+    
+    setLoading(true);
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      const userRef = doc(db, 'users', user.uid);
+      
+      // Удаляем книгу со старым статусом
+      await updateDoc(userRef, {
+        books: arrayRemove(currentBook)
+      });
+      
+      // Создаем обновленную книгу с новым статусом
+      const updatedBook = {
+        ...currentBook,
+        status: newStatus,
+        // Автоматически устанавливаем pagesRead для "Прочитано"
+        pagesRead: newStatus === 'Прочитано' ? currentBook.totalPages : currentBook.pagesRead
+      };
+      
+      // Добавляем обновленную книгу
+      await updateDoc(userRef, {
+        books: arrayUnion(updatedBook)
+      });
+
+      setCurrentBook(updatedBook);
+      Alert.alert('Успех', `Книга перемещена в "${newStatus}"`);
+    } catch (error) {
+      console.error('Ошибка при изменении статуса:', error);
+      Alert.alert('Ошибка', 'Не удалось изменить статус книги');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreateNote = () => {
     navigation.navigate('NoteEditorScreen', { 
@@ -37,38 +93,53 @@ export default function BookDetailScreen({ route, navigation }) {
   };
 
   const handleMarkAsRead = async () => {
-    if (!isRead) {
-      try {
-        const user = auth.currentUser;
-        if (!user) return;
+    const pagesNumber = parseInt(pagesTodayInput);
+  if (isNaN(pagesNumber) || pagesNumber <= 0) {
+    Alert.alert('Ошибка', 'Введите корректное число страниц');
+    return;
+  }
 
-        const userRef = doc(db, 'users', user.uid);
-        
-        // Обновляем статус книги в базе данных
-        await updateDoc(userRef, {
-          books: arrayRemove(book)
-        });
-        
-        const updatedBook = {
-          ...book,
-          notes: [newNote, ...(book.notes || [])],
-          lastNote: new Date().toLocaleDateString('ru-RU', { 
-            day: 'numeric', 
-            month: 'long' // "мая" вместо "05"
-          }) // Теперь будет "12 мая"
-        };
-        
-        await updateDoc(userRef, {
-          books: arrayUnion(updatedBook)
-        });
+  try {
+    const user = auth.currentUser;
+    const userRef = doc(db, 'users', user.uid);
+    const userSnap = await getDoc(userRef);
+    const allBooks = userSnap.data().books || [];
 
-        setIsRead(true);
-        Alert.alert('Успех', 'Книга отмечена как прочитанная');
-      } catch (error) {
-        console.error('Ошибка при обновлении статуса:', error);
-        Alert.alert('Ошибка', 'Не удалось обновить статус книги');
-      }
-    }
+    const updatedPages = Math.min(pagesRead + pagesNumber, totalPages);
+    
+    // Создаем обновленную книгу
+    const updatedBook = {
+      ...book,
+      pagesRead: updatedPages,
+      readDates: [...(book.readDates || []), new Date().toISOString().split('T')[0]],
+      readPages: [
+        ...(book.readPages || []),
+        {
+          date: new Date().toISOString().split('T')[0],
+          pages: pagesNumber
+        }
+      ]
+    };
+
+    // Обновляем массив книг
+    const updatedBooks = allBooks.map(b => b.id === book.id ? updatedBook : b);
+    
+    await updateDoc(userRef, { books: updatedBooks });
+
+    setPagesRead(updatedPages);
+    setPagesTodayInput('');
+    setIsMarkModalVisible(false);
+    
+    // Возвращаемся с обновленной книгой
+    navigation.navigate('BookDetailScreen', { 
+      book: updatedBook,
+      refresh: true 
+    });
+    
+  } catch (error) {
+    console.error(error);
+    Alert.alert('Ошибка', 'Не удалось обновить прогресс');
+  }
   };
 
   const handleDeleteBook = async () => {
@@ -91,6 +162,41 @@ export default function BookDetailScreen({ route, navigation }) {
       Alert.alert('Ошибка', 'Не удалось удалить книгу');
     }
   };
+
+  useEffect(() => {
+    if (currentBook.status === 'Планирую' && currentBook.pagesRead > 0) {
+      const updateBookStatus = async () => {
+        try {
+          const user = auth.currentUser;
+          const userRef = doc(db, 'users', user.uid);
+          
+          // Сначала удаляем старую версию книги
+          await updateDoc(userRef, {
+            books: arrayRemove(currentBook)
+          });
+          
+          // Создаем обновленную версию с новым статусом
+          const updatedBook = {
+            ...currentBook,
+            status: 'Читаю сейчас'
+          };
+          
+          // Добавляем обновленную книгу
+          await updateDoc(userRef, {
+            books: arrayUnion(updatedBook)
+          });
+          
+          // Обновляем локальное состояние
+          setCurrentBook(updatedBook);
+          
+        } catch (error) {
+          console.error('Ошибка при обновлении статуса книги:', error);
+        }
+      };
+      
+      updateBookStatus();
+    }
+  }, [currentBook.pagesRead]);
 
   // При загрузке экрана
   useEffect(() => {
@@ -142,8 +248,7 @@ export default function BookDetailScreen({ route, navigation }) {
       <View style={{flexDirection: 'row', zIndex: 1}}>
         <TouchableOpacity 
           style={{marginTop: 77, marginLeft: 25}} 
-          onPress={() => navigation.goBack()}
-        >
+          onPress={() => navigation.navigate('HomeScreen')}>
           <Image source={require('../../assets/Vector.png')} />
         </TouchableOpacity>
         <Text style={[styles.mainTitle, {marginLeft: 120, marginTop: 70}]}>О книге</Text>
@@ -171,6 +276,7 @@ export default function BookDetailScreen({ route, navigation }) {
         )}
       </View>
 
+      
       <View style={{marginLeft: 250, bottom: 285}}>
         <TouchableOpacity style={[styles.greenText, {flexDirection: 'row', marginBottom: 40}]}
         onPress={() => navigation.navigate('ProgressScreen', { book })}>
@@ -281,6 +387,19 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     color: '#333',
+  },
+    statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    marginLeft: 60,
+    marginTop: 5
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333'
   },
   itemText: {
     fontSize: 16,

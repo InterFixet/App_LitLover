@@ -45,17 +45,47 @@ const handleMarkPages = async () => {
   }
 
   const updatedPages = Math.min(pagesRead + pagesNumber, totalPages);
-  const todayStr = new Date().toISOString().split('T')[0];
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const todayKey = todayStr; // Формат: "YYYY-MM-DD"
+  
   try {
     const user = auth.currentUser;
     const userRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userRef);
     const allBooks = userSnap.data().books || [];
 
+    // Получаем текущие данные о страницах
+    const currentReadPages = book.readPages || [];
+    
+    // Находим запись за сегодня (если есть)
+    const todayEntryIndex = currentReadPages.findIndex(entry => entry.date.startsWith(todayStr));
+    
+    // Создаем обновленную запись
+    let updatedReadPages;
+    if (todayEntryIndex >= 0) {
+      // Если запись за сегодня уже есть - обновляем ее
+      updatedReadPages = [...currentReadPages];
+      updatedReadPages[todayEntryIndex] = {
+        date: todayKey,
+        pages: (updatedReadPages[todayEntryIndex].pages || 0) + pagesNumber
+      };
+    } else {
+      // Если записи нет - добавляем новую
+      updatedReadPages = [
+        ...currentReadPages,
+        {
+          date: todayKey,
+          pages: pagesNumber
+        }
+      ];
+    }
+
     const updatedBook = {
       ...book,
       pagesRead: updatedPages,
       readDates: [...(book.readDates || []), todayStr],
+      readPages: updatedReadPages // Сохраняем обновленные данные о страницах
     };
 
     const updatedBooks = allBooks.map(b => b.id === book.id ? updatedBook : b);
